@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 import databases
 import sqlalchemy
+from sqlalchemy import create_engine
 from sqlalchemy import text
 import asyncio
 import os
@@ -42,21 +43,8 @@ async def wait_for_db():
 async def startup():
     await wait_for_db()
     
-    async with database.connection() as connection:
-        await connection.execute(text("""
-            CREATE TABLE IF NOT EXISTS students (
-                telegram_id TEXT PRIMARY KEY,
-                name TEXT NOT NULL
-            )
-        """))
-        await connection.execute(text("""
-            CREATE TABLE IF NOT EXISTS scores (
-                id SERIAL PRIMARY KEY,
-                telegram_id TEXT REFERENCES students(telegram_id),
-                subject TEXT NOT NULL,
-                score INTEGER NOT NULL
-            )
-        """))
+    engine = create_engine(DATABASE_URL)
+    metadata.create_all(engine)
 
 @app.on_event("shutdown")
 async def shutdown():
