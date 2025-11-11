@@ -5,6 +5,14 @@ from sqlalchemy import create_engine
 from sqlalchemy import text
 import asyncio
 import os
+import logging
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s- %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:password@postgres:5432/ege_db")
 
@@ -52,6 +60,7 @@ async def shutdown():
 
 @app.post("/students/{telegram_id}/{name}")
 async def create_student(telegram_id: str, name: str):
+    logger.info(f"Attemting register student: {name}, id: {telegram_id}")
     try:
         query = students.select().where(students.c.telegram_id == telegram_id)
         existing_student = await database.fetch_one(query)
@@ -62,13 +71,16 @@ async def create_student(telegram_id: str, name: str):
         await database.execute(query)
         return "ok"
     except Exception as e:
+        logger.info(f"Error registering student: {name}, id: {id}")
         return "error"
 
 @app.get("/students/{telegram_id}")
 async def get_student_scores(telegram_id: str):
+    logger.info(f"Fetching scores for student: {telegram_id}")
     query = students.select().where(students.c.telegram_id == telegram_id)
     student = await database.fetch_one(query)
     if not student:
+        logger.error(f"Student not found: {telegram_id}")
         return "not found"
     
     query = scores.select().where(scores.c.telegram_id == telegram_id)
@@ -78,19 +90,24 @@ async def get_student_scores(telegram_id: str):
 
 @app.post("/scores/{telegram_id}/{subject}/{score}")
 async def create_score(telegram_id: str, subject: str, score: int):
+    logger.info(f"Adding score: {telegram_id}, {subject}, {score}")
     query = students.select().where(students.c.telegram_id == telegram_id)
     student = await database.fetch_one(query)
     if not student:
+        logger.warning(f"Student not found when adding score: {telegram_id}")
         return "not found"
     
     if not 0 <= score <= 100:
+        logger.warning(f"Invalid score attempted: {score} for student {telegram_id}")
         return "invalid_score"
     
     try:
         query = scores.insert().values(telegram_id=telegram_id, subject=subject, score=score)
         await database.execute(query)
+        logger.info(f"Score added successfully: {telegram_id}, {subject}, {score}")
         return "ok"
     except Exception as e:
+        logger.error(f"Error adding score for {telegram_id}: {str(e)}")
         return "error"
 
 @app.get("/subjects")
@@ -103,4 +120,5 @@ async def health_check():
         await database.execute(text("SELECT 1"))
         return {"status": "healthy", "database": "connected"}
     except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
         return {"status": "unhealthy", "database": "disconnected"}

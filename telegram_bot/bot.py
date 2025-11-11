@@ -2,6 +2,7 @@ import os
 import aiohttp
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
+import logging
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 API_URL = "http://backend:8000"
@@ -17,11 +18,13 @@ async def start(message: types.Message):
 
 @dp.message(Command("register"))
 async def register(message: types.Message):
+    logger.info(f"User {message.from_user.id} started registration")
     await message.answer("Введите имя:")
     state[message.from_user.id] = "name"
 
 @dp.message(Command("enter_scores"))
 async def enter_scores(message: types.Message):
+    logger.info(f"User {message.from_user.id} started entering scores")
     async with aiohttp.ClientSession() as session:
         async with session.get(f"{API_URL}/subjects") as resp:
             subjects = await resp.json()
@@ -36,17 +39,20 @@ async def enter_scores(message: types.Message):
 
 @dp.message(Command("view_scores"))
 async def view_scores(message: types.Message):
+    logger.info(f"User {message.from_user.id} requested to view scores")
     async with aiohttp.ClientSession() as session:
         async with session.get(f"{API_URL}/students/{message.from_user.id}") as resp:
             result = await resp.text()
     
     if result == "not found":
+        logger.warning(f"User {message.from_user.id} tried to view scores but not registered")
         await message.answer("Сначала /reg")
         return
     
     scores = eval(result) if result != "not found" else []
     
     if not scores:
+        logger.info(f"User {message.from_user.id} has no scores yet")
         await message.answer("Нет баллов")
         return
     
@@ -65,20 +71,25 @@ async def all_messages(message: types.Message):
             async with session.post(f"{API_URL}/students/{user_id}/{name}") as resp:
                 result = await resp.text()
                 if "ok" in result:
+                    logger.info(f"User {user_id} registered successfully with name: {name}")
                     await message.answer("Успешно")
-                elif "alreadu_exists":
+                elif "already_exists":
+                    logger.info(f"User {user_id} already registered, tried to change name to: {name}")
                     await message.answer("вы уже зарегистрированы")
                 else:
+                    logger_error(f"Registration errro for user {user_id}: {result}")
                     await message.answer("Ошибка регистрации")
         del state[user_id]
     
     elif state[user_id] == "subject":
         subject = message.text
+        logger.info(f"User {user_id} selected subject: {subject}")
         async with aiohttp.ClientSession() as session:
             async with session.get(f"{API_URL}/subjects") as resp:
                 subjects = await resp.json()
         
         if subject not in subjects:
+            logger.warning(f"User {user_id} selected invalid subject: {subject}")
             await message.answer("Выберите из списка")
             return
         
@@ -89,9 +100,11 @@ async def all_messages(message: types.Message):
         try:
             score = int(message.text)
             if not 0 <= score <= 100:
+                logger.warning(f"User {user_id} entered invalid score: {score}")
                 await message.answer("Баллы должны быть от 0 до 100")
                 return
         except:
+            logger.warning(f"User {user_id} entered non-numeric score: {message.text}")
             await message.answer("Введите число")
             return
         
@@ -100,8 +113,10 @@ async def all_messages(message: types.Message):
             async with session.post(f"{API_URL}/scores/{user_id}/{subject}/{score}") as resp:
                 result = await resp.text()
                 if "ok" in result:
+                    logger.info(f"User {user_id} successfully saved score {score} for {subject}")
                     await message.answer("Сохранено")
                 else:
+                    logger.error(f"Score save error for user {user_id}: {result}")
                     await message.answer("Ошибка сохранения")
         del state[user_id]
 
