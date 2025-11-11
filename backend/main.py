@@ -1,8 +1,11 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 import databases
 import sqlalchemy
+from sqlalchemy import text
+import asyncio
 
 DATABASE_URL = "postgresql://postgres:password@postgres:5432/ege_db"
+
 database = databases.Database(DATABASE_URL)
 metadata = sqlalchemy.MetaData()
 
@@ -10,60 +13,108 @@ students = sqlalchemy.Table(
     "students",
     metadata,
     sqlalchemy.Column("telegram_id", sqlalchemy.String, primary_key=True),
-    sqlalchemy.Column("name", sqlalchemy.String),
+    sqlalchemy.Column("name", sqlalchemy.String, nullable=False),  # Добавлен nullable=False
 )
 
 scores = sqlalchemy.Table(
     "scores",
     metadata,
-    sqlalchemy.Column("telegram_id", sqlalchemy.String),
-    sqlalchemy.Column("subject", sqlalchemy.String),
-    sqlalchemy.Column("score", sqlalchemy.Integer),
+    sqlalchemy.Column("id", sqlalchemy.Integer, primary_key=True),  # Добавлен primary key
+    sqlalchemy.Column("telegram_id", sqlalchemy.String, sqlalchemy.ForeignKey("students.telegram_id")),  # Добавлен foreign key
+    sqlalchemy.Column("subject", sqlalchemy.String, nullable=False),
+    sqlalchemy.Column("score", sqlalchemy.Integer, nullable=False),
 )
 
 app = FastAPI()
 
+async def wait_for_db():
+    """Ждем пока база данных станет доступной"""
+    for i in range(10):
+        try:
+            await database.connect()
+            return True
+        except Exception:
+            print(f"Database connection failed, retrying... ({i+1}/10)")
+            await asyncio.sleep(2)
+    raise Exception("Could not connect to database")
+
 @app.on_event("startup")
 async def startup():
-    await database.connect()
-    engine = sqlalchemy.create_engine(DATABASE_URL)
-    metadata.create_all(engine)
+    # Ждем подключения к БД
+    await wait_for_db()
+    
+    # Создаем таблицы
+    async with database.connection() as connection:
+        await connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS students (
+                telegram_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL
+            )
+        """))
+        await connection.execute(text("""
+            CREATE TABLE IF NOT EXISTS scores (
+                id SERIAL PRIMARY KEY,
+                telegram_id TEXT REFERENCES students(telegram_id),
+                subject TEXT NOT NULL,
+                score INTEGER NOT NULL
+            )
+        """))
+
+@app.on_event("shutdown")
+async def shutdown():
+    await database.disconnect()
 
 @app.post("/students/{telegram_id}/{name}")
 async def create_student(telegram_id: str, name: str):
     try:
         query = students.insert().values(telegram_id=telegram_id, name=name)
         await database.execute(query)
-        return "ok"
-    except:
-        return "error"
+        return {"status": "success", "message": "Student created"}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail="Student already exists")
 
 @app.get("/students/{telegram_id}")
-async def get_student(telegram_id: str):
+async def get_student_scores(telegram_id: str):
+    # Проверяем существование студента
     query = students.select().where(students.c.telegram_id == telegram_id)
     student = await database.fetch_one(query)
     if not student:
-        return "not found"
+        raise HTTPException(status_code=404, detail="Student not found")
     
+    # Получаем баллы студента
     query = scores.select().where(scores.c.telegram_id == telegram_id)
     student_scores = await database.fetch_all(query)
     
-    return [{"subject": s.subject, "score": s.score} for s in student_scores]
+    return [{"subject": score.subject, "score": score.score} for score in student_scores]
 
 @app.post("/scores/{telegram_id}/{subject}/{score}")
 async def create_score(telegram_id: str, subject: str, score: int):
+    # Проверяем существование студента
     query = students.select().where(students.c.telegram_id == telegram_id)
     student = await database.fetch_one(query)
     if not student:
-        return "not found"
+        raise HTTPException(status_code=404, detail="Student not found")
+    
+    # Валидация баллов
+    if not 0 <= score <= 100:
+        raise HTTPException(status_code=400, detail="Score must be between 0 and 100")
     
     try:
         query = scores.insert().values(telegram_id=telegram_id, subject=subject, score=score)
         await database.execute(query)
-        return "ok"
-    except:
-        return "error"
+        return {"status": "success", "message": "Score added"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/subjects")
 async def get_subjects():
-    return ["Математика", "Русский", "Информатика"]
+    return ["Математика", "Русский язык", "Информатика", "Физика", "Химия"]
+
+# Health check эндпоинт
+@app.get("/health")
+async def health_check():
+    try:
+        await database.execute(text("SELECT 1"))
+        return {"status": "healthy", "database": "connected"}
+    except Exception as e:
+        return {"status": "unhealthy", "database": "disconnected"}
