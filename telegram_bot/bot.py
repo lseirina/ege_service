@@ -13,15 +13,15 @@ state = {}
 
 @dp.message(Command("start"))
 async def start(message: types.Message):
-    await message.answer("Бот ЕГЭ. Команды: /reg /add /view")
+    await message.answer("Бот ЕГЭ. Команды: /register /enter_scores /view_scores")
 
-@dp.message(Command("reg"))
-async def reg(message: types.Message):
+@dp.message(Command("register"))
+async def register(message: types.Message):
     await message.answer("Введите имя:")
     state[message.from_user.id] = "name"
 
-@dp.message(Command("add"))
-async def add(message: types.Message):
+@dp.message(Command("enter_scores"))
+async def enter_scores(message: types.Message):
     async with aiohttp.ClientSession() as session:
         async with session.get(f"{API_URL}/subjects") as resp:
             subjects = await resp.json()
@@ -34,15 +34,17 @@ async def add(message: types.Message):
     state[message.from_user.id] = "subject"
     await message.answer("Выберите предмет:", reply_markup=keyboard)
 
-@dp.message(Command("view"))
-async def view(message: types.Message):
+@dp.message(Command("view_scores"))
+async def view_scores(message: types.Message):
     async with aiohttp.ClientSession() as session:
         async with session.get(f"{API_URL}/students/{message.from_user.id}") as resp:
-            scores = await resp.json()
+            result = await resp.text()
     
-    if scores == "not found":
+    if result == "not found":
         await message.answer("Сначала /reg")
         return
+    
+    scores = eval(result) if result != "not found" else []
     
     if not scores:
         await message.answer("Нет баллов")
@@ -62,10 +64,12 @@ async def all_messages(message: types.Message):
         async with aiohttp.ClientSession() as session:
             async with session.post(f"{API_URL}/students/{user_id}/{name}") as resp:
                 result = await resp.text()
-                if result == "ok":
+                if "ok" in result:
                     await message.answer("Успешно")
+                elif "alreadu_exists":
+                    await message.answer("вы уже зарегистрированы")
                 else:
-                    await message.answer("Ошибка")
+                    await message.answer("Ошибка регистрации")
         del state[user_id]
     
     elif state[user_id] == "subject":
@@ -84,6 +88,9 @@ async def all_messages(message: types.Message):
     elif isinstance(state[user_id], dict) and state[user_id].get("step") == "score":
         try:
             score = int(message.text)
+            if not 0 <= score <= 100:
+                await message.answer("Баллы должны быть от 0 до 100")
+                return
         except:
             await message.answer("Введите число")
             return
@@ -92,10 +99,10 @@ async def all_messages(message: types.Message):
         async with aiohttp.ClientSession() as session:
             async with session.post(f"{API_URL}/scores/{user_id}/{subject}/{score}") as resp:
                 result = await resp.text()
-                if result == "ok":
+                if "ok" in result:
                     await message.answer("Сохранено")
                 else:
-                    await message.answer("Ошибка")
+                    await message.answer("Ошибка сохранения")
         del state[user_id]
 
 if __name__ == "__main__":

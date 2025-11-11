@@ -1,10 +1,11 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 import databases
 import sqlalchemy
 from sqlalchemy import text
 import asyncio
+import os
 
-DATABASE_URL = "postgresql://postgres:password@postgres:5432/ege_db"
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:password@postgres:5432/ege_db")
 
 database = databases.Database(DATABASE_URL)
 metadata = sqlalchemy.MetaData()
@@ -13,14 +14,14 @@ students = sqlalchemy.Table(
     "students",
     metadata,
     sqlalchemy.Column("telegram_id", sqlalchemy.String, primary_key=True),
-    sqlalchemy.Column("name", sqlalchemy.String, nullable=False),  # Добавлен nullable=False
+    sqlalchemy.Column("name", sqlalchemy.String, nullable=False),
 )
 
 scores = sqlalchemy.Table(
     "scores",
     metadata,
-    sqlalchemy.Column("id", sqlalchemy.Integer, primary_key=True),  # Добавлен primary key
-    sqlalchemy.Column("telegram_id", sqlalchemy.String, sqlalchemy.ForeignKey("students.telegram_id")),  # Добавлен foreign key
+    sqlalchemy.Column("id", sqlalchemy.Integer, primary_key=True),
+    sqlalchemy.Column("telegram_id", sqlalchemy.String, sqlalchemy.ForeignKey("students.telegram_id")),
     sqlalchemy.Column("subject", sqlalchemy.String, nullable=False),
     sqlalchemy.Column("score", sqlalchemy.Integer, nullable=False),
 )
@@ -28,7 +29,6 @@ scores = sqlalchemy.Table(
 app = FastAPI()
 
 async def wait_for_db():
-    """Ждем пока база данных станет доступной"""
     for i in range(10):
         try:
             await database.connect()
@@ -40,10 +40,8 @@ async def wait_for_db():
 
 @app.on_event("startup")
 async def startup():
-    # Ждем подключения к БД
     await wait_for_db()
     
-    # Создаем таблицы
     async with database.connection() as connection:
         await connection.execute(text("""
             CREATE TABLE IF NOT EXISTS students (
@@ -67,21 +65,24 @@ async def shutdown():
 @app.post("/students/{telegram_id}/{name}")
 async def create_student(telegram_id: str, name: str):
     try:
+        query = students.select().where(students.c.telegram_id == telegram_id)
+        existing_student = await database.fetch_one(query)
+        if existing_student:
+            return "already_exists"
+        
         query = students.insert().values(telegram_id=telegram_id, name=name)
         await database.execute(query)
-        return {"status": "success", "message": "Student created"}
+        return "ok"
     except Exception as e:
-        raise HTTPException(status_code=400, detail="Student already exists")
+        return "error"
 
 @app.get("/students/{telegram_id}")
 async def get_student_scores(telegram_id: str):
-    # Проверяем существование студента
     query = students.select().where(students.c.telegram_id == telegram_id)
     student = await database.fetch_one(query)
     if not student:
-        raise HTTPException(status_code=404, detail="Student not found")
+        return "not found"
     
-    # Получаем баллы студента
     query = scores.select().where(scores.c.telegram_id == telegram_id)
     student_scores = await database.fetch_all(query)
     
@@ -89,28 +90,25 @@ async def get_student_scores(telegram_id: str):
 
 @app.post("/scores/{telegram_id}/{subject}/{score}")
 async def create_score(telegram_id: str, subject: str, score: int):
-    # Проверяем существование студента
     query = students.select().where(students.c.telegram_id == telegram_id)
     student = await database.fetch_one(query)
     if not student:
-        raise HTTPException(status_code=404, detail="Student not found")
+        return "not found"
     
-    # Валидация баллов
     if not 0 <= score <= 100:
-        raise HTTPException(status_code=400, detail="Score must be between 0 and 100")
+        return "invalid_score"
     
     try:
         query = scores.insert().values(telegram_id=telegram_id, subject=subject, score=score)
         await database.execute(query)
-        return {"status": "success", "message": "Score added"}
+        return "ok"
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Internal server error")
+        return "error"
 
 @app.get("/subjects")
 async def get_subjects():
     return ["Математика", "Русский язык", "Информатика", "Физика", "Химия"]
 
-# Health check эндпоинт
 @app.get("/health")
 async def health_check():
     try:

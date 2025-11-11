@@ -30,7 +30,7 @@ services:
   telegram_bot:
     build: ./telegram_bot
     environment:
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?err}  # Обязательная переменная
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?err}
       API_URL: http://backend:8000
     depends_on:
       - backend
