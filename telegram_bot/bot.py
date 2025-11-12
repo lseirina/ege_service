@@ -4,6 +4,10 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 import logging
 
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 API_URL = "http://backend:8000"
 

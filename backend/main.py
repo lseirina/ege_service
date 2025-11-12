@@ -71,7 +71,7 @@ async def create_student(telegram_id: str, name: str):
         await database.execute(query)
         return "ok"
     except Exception as e:
-        logger.info(f"Error registering student: {name}, id: {id}")
+        logger.info(f"Error registering student: {name}, id: {telegram_id}")
         return "error"
 
 @app.get("/students/{telegram_id}")
